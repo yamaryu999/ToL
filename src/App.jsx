@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Fingerprint, Activity, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Fingerprint, Activity, AlertTriangle, CheckCircle, Mic } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -8,7 +8,7 @@ function cn(...inputs) {
     return twMerge(clsx(inputs));
 }
 
-// Audio Context helper
+// Audio Context helper for SFX
 const playSound = (type) => {
     try {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -89,9 +89,73 @@ const Footer = () => (
     </footer>
 )
 
+// Audio Analyzer Hook
+const useAudioAnalyzer = (active) => {
+    const [audioData, setAudioData] = useState(new Uint8Array(32).fill(0));
+    const audioContextRef = useRef(null);
+    const analyserRef = useRef(null);
+    const sourceRef = useRef(null);
+    const rafRef = useRef(null);
+
+    useEffect(() => {
+        if (!active) {
+            if (audioContextRef.current) {
+                audioContextRef.current.close();
+                audioContextRef.current = null;
+            }
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+            }
+            return;
+        }
+
+        const initAudio = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                const ctx = new AudioContext();
+                const analyser = ctx.createAnalyser();
+                const source = ctx.createMediaStreamSource(stream);
+
+                analyser.fftSize = 64; // Small size for performance and chunkiness
+                source.connect(analyser);
+
+                audioContextRef.current = ctx;
+                analyserRef.current = analyser;
+                sourceRef.current = source;
+
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                const update = () => {
+                    if (!analyserRef.current) return;
+                    analyserRef.current.getByteFrequencyData(dataArray);
+                    setAudioData(new Uint8Array(dataArray));
+                    rafRef.current = requestAnimationFrame(update);
+                };
+                update();
+            } catch (err) {
+                console.warn("Microphone access denied or error", err);
+                // Fallback to simpler random animation handled by UI
+            }
+        };
+
+        initAudio();
+
+        return () => {
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+            if (audioContextRef.current) audioContextRef.current.close();
+        };
+    }, [active]);
+
+    return audioData;
+};
+
+
 export default function App() {
     const [status, setStatus] = useState('IDLE'); // IDLE, ANALYZING, RESULT_TRUE, RESULT_LIE
     const [scanText, setScanText] = useState('INITIALIZING...');
+    const audioData = useAudioAnalyzer(status === 'ANALYZING');
 
     const handleStart = (e) => {
         e.preventDefault();
@@ -125,22 +189,22 @@ export default function App() {
         const interval = setInterval(() => {
             steps++;
             const texts = [
-                "READING BIOMETRICS...",
-                "ANALYZING MICRO-TREMORS...",
-                "CHECKING VOICE PATTERN...",
-                "CROSS-REFERENCING DATABASE...",
+                "LISTENING TO VOICE...",
+                "ANALYZING PITCH...",
+                "DETECTING HESITATION...",
+                "MEASURING STRESS LEVELS...",
                 "DETECTING SWEAT RESPONSE...",
                 "CALCULATING PROBABILITY..."
             ];
             setScanText(texts[Math.floor(Math.random() * texts.length)]);
             playSound('analyzing');
-        }, 500);
+        }, 600);
 
         setTimeout(() => {
             clearInterval(interval);
             setStatus(outcome === 'TRUE' ? 'RESULT_TRUE' : 'RESULT_LIE');
             playSound(outcome === 'TRUE' ? 'true' : 'lie');
-        }, 4000); // 4 seconds analysis
+        }, 5000); // 5 seconds analysis for speech
     };
 
     const handleReset = () => {
@@ -198,24 +262,36 @@ export default function App() {
                             className="flex flex-col items-center w-full max-w-md gap-8"
                         >
                             <div className="w-full h-48 border-2 border-cyber-green/30 bg-black/80 relative overflow-hidden flex items-center justify-center rounded-lg shadow-[0_0_20px_rgba(0,255,65,0.1)]">
-                                {/* Fake Waveform */}
-                                <div className="flex items-end gap-1 w-full h-full px-2 py-4">
-                                    {[...Array(30)].map((_, i) => (
-                                        <motion.div
-                                            key={i}
-                                            className="flex-1 bg-cyber-green"
-                                            animate={{
-                                                height: ["10%", "90%", "20%", "60%", "10%"],
-                                                opacity: [0.5, 1, 0.5]
-                                            }}
-                                            transition={{
-                                                duration: 0.2 + Math.random() * 0.3,
-                                                repeat: Infinity,
-                                                delay: i * 0.02,
-                                                ease: "easeInOut"
-                                            }}
-                                        />
-                                    ))}
+                                {/* Real Audio Visualization */}
+                                <div className="flex items-end gap-0.5 w-full h-full px-2 py-4 justify-center">
+                                    {Array.from(audioData).slice(0, 32).map((value, i) => {
+                                        // Fallback animation if no audio (value is 0)
+                                        const height = value > 0
+                                            ? `${(value / 255) * 100}%`
+                                            : "10%";
+
+                                        return (
+                                            <motion.div
+                                                key={i}
+                                                className="flex-1 bg-cyber-green/80 hover:bg-cyber-green"
+                                                style={{ height }}
+                                                animate={value === 0 ? {
+                                                    height: ["10%", "30%", "10%"],
+                                                    opacity: [0.3, 0.6, 0.3]
+                                                } : {}}
+                                                transition={value === 0 ? {
+                                                    duration: 0.5,
+                                                    repeat: Infinity,
+                                                    delay: i * 0.1,
+                                                    ease: "easeInOut"
+                                                } : { type: "tween", ease: "linear", duration: 0.05 }}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                                <div className="absolute bottom-2 right-2 flex items-center gap-1 text-[10px] text-cyber-green/50">
+                                    <Mic className="w-3 h-3 animate-pulse" />
+                                    LISTENING
                                 </div>
                             </div>
 
@@ -223,14 +299,14 @@ export default function App() {
                                 <div className="text-xl md:text-2xl tracking-widest animate-pulse text-center font-bold text-cyber-green drop-shadow-[0_0_5px_rgba(0,255,65,0.8)]">
                                     {scanText}
                                 </div>
-                                <div className="text-xs text-cyber-green/50">PROCESSING DATA STREAMS...</div>
+                                <div className="text-xs text-cyber-green/50">PROCESSING VOICE DATA...</div>
                             </div>
 
                             <div className="w-full h-1 bg-cyber-green/20 rounded-full overflow-hidden">
                                 <motion.div
                                     initial={{ width: "0%" }}
                                     animate={{ width: "100%" }}
-                                    transition={{ duration: 4, ease: "linear" }}
+                                    transition={{ duration: 5, ease: "linear" }}
                                     className="h-full bg-cyber-green shadow-[0_0_10px_rgba(0,255,65,1)]"
                                 />
                             </div>
