@@ -179,9 +179,39 @@ const useAudioAnalyzer = (active) => {
 
 
 export default function App() {
-    const [status, setStatus] = useState('IDLE'); // IDLE, ANALYZING, RESULT_TRUE, RESULT_LIE
+    const [status, setStatus] = useState('IDLE'); // IDLE, CALIBRATING, ANALYZING, RESULT_TRUE, RESULT_LIE
     const [scanText, setScanText] = useState('INITIALIZING...');
-    const audioData = useAudioAnalyzer(status === 'ANALYZING');
+    const [baseline, setBaseline] = useState(null); // { volume: 0, pitch: 0 }
+
+    // High res analyzer for data processing, distinct from visualizer if possible, 
+    // but here we just reuse the hook's data or logic.
+    // Actually, we need to access the raw data inside the logic. 
+    // For simplicity, we will calculate "instant" metrics during the ANALYZING/CALIBRATING phase
+    // using a ref to the AudioContext from the hook? No, the hook handles it.
+    // Let's modify the hook to return the analyser node or processing functions.
+    // OR, simpler: We calculate metrics inside the component using the `audioData` (frequency data).
+
+    // Note: audioData from hook is currently FrequencyData (FFT).
+    // Current FFT size is 64(visuals). We need higher for analysis.
+    // Let's modify useAudioAnalyzer to accept "mode" ('visual' or 'analysis').
+    // For now, we'll stick to Volume (RMS equivalent from FFT sum) as the main "Stress" indicator
+    // because Pitch requires higher FFT size which might slow down the visualizer or complicate things.
+    // "Volume Stress" (Loud/Fast talking) is a good enough proxy for a joke app.
+
+    const audioData = useAudioAnalyzer(status === 'ANALYZING' || status === 'CALIBRATING');
+    const [measurements, setMeasurements] = useState([]);
+
+    // Collect data
+    useEffect(() => {
+        if ((status === 'ANALYZING' || status === 'CALIBRATING') && audioData) {
+            // Calculate average volume (amplitude)
+            const sum = audioData.reduce((a, b) => a + b, 0);
+            const avg = sum / audioData.length;
+            if (avg > 5) { // Filter silence
+                setMeasurements(prev => [...prev, avg]);
+            }
+        }
+    }, [audioData, status]);
 
     const handleStart = (e) => {
         e.preventDefault();
@@ -195,20 +225,21 @@ export default function App() {
 
         // 0 to 0.4: TRUE (Left side)
         // 0.6 to 1.0: LIE (Right side)
-        // 0.4 to 0.6: Random
+        // 0.4 to 0.6: REAL ANALYIS (Center)
 
         const ratio = x / width;
-        let outcome = 'TRUE';
-        if (ratio < 0.4) {
-            outcome = 'TRUE';
-        } else if (ratio > 0.6) {
-            outcome = 'LIE';
-        } else {
-            outcome = Math.random() > 0.5 ? 'TRUE' : 'LIE';
-        }
+        let forcedOutcome = null;
 
-        playSound('start');
+        if (ratio < 0.4) {
+            forcedOutcome = 'TRUE';
+        } else if (ratio > 0.6) {
+            forcedOutcome = 'LIE';
+        }
+        // If center, forcedOutcome is null -> Real Analysis
+
+        setMeasurements([]); // clear previous
         setStatus('ANALYZING');
+        playSound('start');
 
         // Analysis Sequence
         let steps = 0;
@@ -228,9 +259,59 @@ export default function App() {
 
         setTimeout(() => {
             clearInterval(interval);
-            setStatus(outcome === 'TRUE' ? 'RESULT_TRUE' : 'RESULT_LIE');
-            playSound(outcome === 'TRUE' ? 'true' : 'lie');
-        }, 5000); // 5 seconds analysis for speech
+
+            let finalResult = 'TRUE';
+
+            if (forcedOutcome) {
+                finalResult = forcedOutcome;
+            } else {
+                // REAL ANALYSIS LOGIC
+                // Compare current measurements to baseline
+                if (!baseline) {
+                    // If no calibration, random
+                    finalResult = Math.random() > 0.5 ? 'TRUE' : 'LIE';
+                } else {
+                    if (measurements.length === 0) {
+                        // Silence = Suspicious = LIE
+                        finalResult = 'LIE';
+                    } else {
+                        const currentAvg = measurements.reduce((a, b) => a + b, 0) / measurements.length;
+                        // If 20% louder than baseline = Stress (LIE)
+                        // Or if variance is high (jitter) - too complex, stick to volume/stress
+                        if (currentAvg > baseline.volume * 1.2) {
+                            finalResult = 'LIE';
+                        } else {
+                            finalResult = 'TRUE';
+                        }
+                    }
+                }
+            }
+
+            setStatus(finalResult === 'TRUE' ? 'RESULT_TRUE' : 'RESULT_LIE');
+            playSound(finalResult === 'TRUE' ? 'true' : 'lie');
+        }, 5000);
+    };
+
+    const handleCalibrate = (e) => {
+        e.stopPropagation(); // Prevents clicking the main button
+        setMeasurements([]);
+        setStatus('CALIBRATING');
+        setScanText("SAY: 'MY NAME IS...'");
+        playSound('start');
+
+        setTimeout(() => {
+            // Finish Calibration
+            if (measurements.length > 0) {
+                const avg = measurements.reduce((a, b) => a + b, 0) / measurements.length;
+                setBaseline({ volume: avg });
+                alert("CALIBRATION COMPLETE");
+            } else {
+                setBaseline({ volume: 50 }); // Default fallback
+                alert("CALIBRATION FAILED (Too quiet). Using defaults.");
+            }
+            setStatus('IDLE');
+            setScanText('READY');
+        }, 3000);
     };
 
     const handleReset = () => {
@@ -276,6 +357,32 @@ export default function App() {
                                 <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs tracking-[0.3em] font-bold text-cyber-green/80 animate-pulse">
                                     TOUCH TO START
                                 </div>
+
+                                {/* CALIBRATE BUTTON (Small) */}
+                                <button
+                                    onClick={handleCalibrate}
+                                    className="absolute -bottom-24 left-1/2 -translate-x-1/2 text-[10px] text-cyber-green/30 hover:text-cyber-green border border-transparent hover:border-cyber-green/30 px-2 py-1 tracking-widest transition-all"
+                                >
+                                    [ CALIBRATE SENSORS ]
+                                </button>
+                            </div>
+                        </motion.div>
+                    )}
+                    {status === 'CALIBRATING' && (
+                        <motion.div
+                            key="calibrating"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="flex flex-col items-center gap-4"
+                        >
+                            <div className="text-xl tracking-widest text-cyber-green animate-pulse">{scanText}</div>
+                            <div className="w-16 h-1 bg-cyber-green/50 overflow-hidden">
+                                <motion.div
+                                    className="h-full bg-cyber-green"
+                                    animate={{ scaleX: [0, 1, 0] }}
+                                    transition={{ repeat: Infinity, duration: 1 }}
+                                />
                             </div>
                         </motion.div>
                     )}
@@ -287,8 +394,7 @@ export default function App() {
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
                             className="flex flex-col items-center w-full max-w-md gap-8"
-                        >
-                            <div className="w-full h-48 border-2 border-cyber-green/30 bg-black/80 relative overflow-hidden flex items-center justify-center rounded-lg shadow-[0_0_20px_rgba(0,255,65,0.1)]">
+                        >                          <div className="w-full h-48 border-2 border-cyber-green/30 bg-black/80 relative overflow-hidden flex items-center justify-center rounded-lg shadow-[0_0_20px_rgba(0,255,65,0.1)]">
                                 {/* Real Audio Visualization */}
                                 <div className="flex items-end gap-0.5 w-full h-full px-2 py-4 justify-center">
                                     {Array.from(audioData).slice(0, 32).map((value, i) => {
