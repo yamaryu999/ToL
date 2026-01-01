@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Fingerprint, Activity, AlertTriangle, CheckCircle, Mic } from 'lucide-react';
+import { Fingerprint, Activity, AlertTriangle, CheckCircle, Mic, Target } from 'lucide-react';
+import Webcam from 'react-webcam';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -68,6 +69,31 @@ const playSound = (type) => {
         console.error(e);
     }
 };
+
+const CameraFeed = () => (
+    <div className="absolute inset-0 z-0 opacity-20 pointer-events-none overflow-hidden">
+        <Webcam
+            audio={false}
+            className="w-full h-full object-cover filter grayscale sepia hue-rotate-90 contrast-125 brightness-75 scale-x-[-1]"
+        />
+        {/* Face HUD Overlay */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-50">
+            <div className="w-64 h-64 border border-cyber-green/50 rounded-full relative animate-pulse">
+                <Target className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 text-cyber-green/80" strokeWidth={1} />
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 text-[10px] text-cyber-green bg-black px-2">FACE_RECOGNITION</div>
+                <div className="absolute top-0 right-0 w-4 h-4 border-t border-r border-cyber-green"></div>
+                <div className="absolute bottom-0 left-0 w-4 h-4 border-b border-l border-cyber-green"></div>
+
+                {/* Random Numbers */}
+                <div className="absolute top-10 -right-12 text-[8px] flex flex-col gap-1 text-cyber-green/70 font-mono">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                        <div key={i}>ID_AX_{i}: {Math.floor(Math.random() * 999)}</div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    </div>
+);
 
 const Header = () => (
     <header className="absolute top-0 left-0 w-full p-4 md:p-6 flex justify-between items-center text-xs md:text-sm tracking-widest border-b border-cyber-green/30 bg-cyber-black/80 backdrop-blur-sm z-30 select-none">
@@ -214,6 +240,7 @@ export default function App() {
 
     return (
         <div className="w-screen h-screen relative bg-cyber-black text-cyber-green overflow-hidden selection:bg-cyber-green selection:text-black font-mono">
+            <CameraFeed />
             <div className="noise"></div>
             <div className="scanline"></div>
             <div className="img-scan"></div>
